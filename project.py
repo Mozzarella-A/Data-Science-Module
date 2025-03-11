@@ -19,17 +19,17 @@ except FileNotFoundError:
     print("Error: Dataset file not found. Please check the file path.")
     exit(1)
 
-#Data cleaning: Remove duplicates and handle missing values
+# Data cleaning: Remove duplicates and handle missing values
 data1 = data1.drop_duplicates().dropna()
 data2 = data2.drop_duplicates().dropna()
 
-#Standardising column names and convert date columns to datetime
+# Standardising column names and convert date columns to datetime
 data1.columns = data1.columns.str.strip().str.lower().str.replace(' ', '_')
 data2.columns = data2.columns.str.strip().str.lower().str.replace(' ', '_')
 data1['date'] = pd.to_datetime(data1['date'], errors='coerce')
 data2['date'] = pd.to_datetime(data2['date'], errors='coerce')
 
-#Optimise memory usage by converting numeric columns to appropriate types
+# Optimise memory usage by converting numeric columns to appropriate types
 for col in data1.select_dtypes(include=['int64', 'float64']).columns:
     data1[col] = pd.to_numeric(data1[col], downcast='integer')
 for col in data2.select_dtypes(include=['int64', 'float64']).columns:
@@ -45,10 +45,9 @@ def measure_processing_time():
     """
     # Sequential processing with Pandas
     start_time = time.time()
-    staying_home_total, traveling_population = analyze_home_vs_travel(silent=False)
-    high_travel_10_25, high_travel_50_100 = identify_peak_travel_dates(silent=False)
+    staying_home_total, traveling_population = analyze_home_vs_travel(silent=True)
+    high_travel_10_25, high_travel_50_100 = identify_peak_travel_dates(silent=True)
     pandas_time = time.time() - start_time
-    print(f"Pandas processed tasks a and b in {pandas_time:.4f}s")
 
     # Parallel processing with Dask across different CPU counts
     processor_counts = [2, 4, 8, 10, 20, 30, 40]
@@ -58,18 +57,10 @@ def measure_processing_time():
         dask_df = dd.from_pandas(data1, npartitions=num_workers)
         dask_df_full = dd.from_pandas(data2, npartitions=num_workers)
         start_time = time.time()
-        # Task a: Compute weekly average of people staying at home
         staying_home_mean = dask_df.groupby('week')['population_staying_at_home'].mean().compute()
-        # Task b: Identify peak travel dates using parallel filtering
         peak_travel_10_25 = dask_df_full[dask_df_full['trips_10-25_miles'] > 10_000_000][['date', 'trips_10-25_miles']].compute()
         peak_travel_50_100 = dask_df_full[dask_df_full['trips_50-100_miles'] > 10_000_000][['date', 'trips_50-100_miles']].compute()
         dask_times[num_workers] = time.time() - start_time
-        print(f"Dask ({num_workers} CPUs) time: {dask_times[num_workers]:.4f}s - Efficiency peaks at 20 CPUs due to balanced workload; higher CPUs introduce scheduling overhead.")
-
-    print("\nProcessing Time Comparison: Pandas vs. Dask")
-    print(f"Pandas (Sequential Processing): {pandas_time:.4f}s")
-    for workers, time_taken in dask_times.items():
-        print(f"Dask ({workers} processors): {time_taken:.4f}s")
 
     # Visualize processing times
     labels = ['Pandas (Sequential)'] + [f'Dask ({w} CPUs)' for w in processor_counts]
@@ -78,12 +69,7 @@ def measure_processing_time():
     plt.figure(figsize=(14, 8))
     colors = ['royalblue', 'forestgreen', 'mediumseagreen', 'dodgerblue', 'darkcyan', 'cadetblue', 'teal']
     bars = plt.bar(labels, times, color=colors, alpha=0.85, edgecolor='black')
-
     plt.xticks(rotation=20, fontsize=13, ha='right', fontweight='bold')
-    for bar in bars:
-        yval = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2, yval + 0.005, f"{yval:.3f}s", ha='center', fontsize=12, fontweight='bold')
-
     plt.xlabel("Processing Method", fontsize=15, fontweight="bold", labelpad=12)
     plt.ylabel("Execution Time (seconds)", fontsize=15, fontweight="bold", labelpad=12)
     plt.title("Comparison of Processing Time: Pandas vs Dask", fontsize=18, fontweight="bold", pad=15)
@@ -104,7 +90,6 @@ def analyze_home_vs_travel(silent=False):
         'population_staying_at_home': ['population_staying_at_home', 'staying_at_home_population', 'home_population'],
         'people_not_staying_at_home': ['people_not_staying_at_home', 'traveling_population', 'away_population']
     }
-    required = ['week', 'population_staying_at_home', 'people_not_staying_at_home']
     selected_cols = {}
 
     for key, options in potential_columns.items():
@@ -112,17 +97,13 @@ def analyze_home_vs_travel(silent=False):
             if option in data2.columns:
                 selected_cols[key] = option
                 break
-        if key not in selected_cols:
-            if not silent:
-                print(f"Required column {key} not found in data2 among options {options}.")
-            return 0, 0
 
     dask_df = dd.from_pandas(data2, npartitions=4)
     staying_home_weekly = dask_df.groupby(selected_cols['week'])[selected_cols['population_staying_at_home']].mean().compute()
     traveling_population = dask_df[selected_cols['people_not_staying_at_home']].mean().compute()
 
     if not silent:
-        print(f"Weekly average staying home: {staying_home_weekly.mean():,.0f}, Traveling population: {traveling_population:,.0f}")
+        return staying_home_weekly.mean(), traveling_population
     return staying_home_weekly.mean(), traveling_population
 
 # ----------------------- Question 2 (Identifying Peak Travel Dates) -----------------------
@@ -134,8 +115,6 @@ def identify_peak_travel_dates(silent=False):
     """
     required_columns = ['date', 'trips_10-25_miles', 'trips_50-100_miles']
     if not all(col in data2.columns for col in required_columns):
-        if not silent:
-            print("Required columns missing in data2 for peak travel analysis.")
         return pd.DataFrame(), pd.DataFrame()
 
     data2['date'] = pd.to_datetime(data2['date'], errors='coerce')
@@ -144,8 +123,7 @@ def identify_peak_travel_dates(silent=False):
     high_travel_50_100 = data2[data2['trips_50-100_miles'] > 10_000_000][['date', 'trips_50-100_miles']]
 
     if not silent:
-        print(f"Peak dates (10-25 miles): {len(high_travel_10_25)}")
-        print(f"Peak dates (50-100 miles): {len(high_travel_50_100)}")
+        return high_travel_10_25, high_travel_50_100
     return high_travel_10_25, high_travel_50_100
 
 # ----------------------- Generate Graphs -----------------------
@@ -163,10 +141,6 @@ def Travelling_vs_Distance():
         'trips_10-25_miles', 'trips_25-50_miles', 'trips_50-100_miles',
         'trips_100-250_miles', 'trips_250-500_miles', 'trips_500+_miles'
     ]
-
-    if not all(col in df.columns for col in distance_columns):
-        print("Required distance columns missing for Travelling_vs_Distance plot.")
-        return
 
     df[distance_columns] = df[distance_columns].apply(pd.to_numeric, errors='coerce')
 
@@ -220,27 +194,36 @@ def identify_peak_travel_dates_graphs():
 def Staying_Home_vs_Week():
     """
     Generate a histogram of average people staying at home per week
-    using data from Trips_by_Distance.csv.
+    using data from Trips_by_Distance.csv with Pandas.
     """
-    df = data1.copy()
-    df['week'] = pd.to_numeric(df['week'], errors='coerce').astype('Int64')
-    df['population_staying_at_home'] = pd.to_numeric(df['population_staying_at_home'], errors='coerce')
+    # Use data1 (Trips_by_Distance.csv)
+    if 'week' not in data1.columns or 'population_staying_at_home' not in data1.columns:
+        return
 
-    weekly_mean = df.groupby('week')['population_staying_at_home'].mean()
+    # Convert columns to numeric, handling potential issues
+    data1['week'] = pd.to_numeric(data1['week'], errors='coerce')
+    data1['population_staying_at_home'] = pd.to_numeric(data1['population_staying_at_home'], errors='coerce')
 
+    # Group by week and calculate mean (national average per week), drop NaN
+    weekly_mean = data1.groupby('week')['population_staying_at_home'].mean().dropna()
+
+    # Plot histogram
     plt.figure(figsize=(12, 6))
-    plt.hist(weekly_mean.index, bins=len(weekly_mean.index), weights=weekly_mean.values, color='royalblue', alpha=0.8, edgecolor='black')
+    plt.hist(weekly_mean.index, bins=len(weekly_mean.index), weights=weekly_mean.values / 1_000, 
+             color='royalblue', alpha=0.8, edgecolor='black')
     plt.xlabel("Week")
-    plt.ylabel("Average People Staying at Home")
-    plt.title("Histogram of People Staying at Home vs. Week")
+    plt.ylabel("Average People Staying at Home (Thousands)")
+    plt.title("Histogram of Average People Staying at Home by Week")
     plt.xticks(ticks=weekly_mean.index, labels=[f"W{int(w)}" for w in weekly_mean.index], rotation=90)
-    plt.gca().get_yaxis().set_major_formatter(plt.FuncFormatter(lambda x, _: f"{int(x):,}"))
+    plt.gca().get_yaxis().set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x:.0f}"))
     plt.grid(axis='y', linestyle='--', alpha=0.7)
     plt.savefig("Histogram_Staying_Home_vs_Week.png", dpi=300, bbox_inches='tight')
     plt.close()
 
 def travel_frequency_prediction():
-   
+    """
+    Develop and visualize a polynomial regression model to predict travel frequency for 5-10 mile trips in Week 32.
+    """
     data1 = pd.read_csv('Trips_by_Distance.csv').drop_duplicates().dropna()
     data2 = pd.read_csv('Trips_Full_Data.csv').drop_duplicates().dropna()
 
@@ -257,7 +240,6 @@ def travel_frequency_prediction():
     }).reset_index()
 
     if df_week_32_1.empty or df_week_32_2.empty:
-        print("No data available for Week 32!")
         return
 
     df_merged = df_week_32_1.copy()
@@ -268,7 +250,6 @@ def travel_frequency_prediction():
     y = df_merged['number_of_trips_5-10']
 
     if X.empty or y.empty or len(X) != len(y):
-        print("Data mismatch! Cannot proceed with modeling.")
         return
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -285,11 +266,6 @@ def travel_frequency_prediction():
     mse_poly = mean_squared_error(y_test, y_pred_poly)
     r2_poly = r2_score(y_test, y_pred_poly)
     poly_cv_scores = cross_val_score(poly_model, X_train_poly, y_train, cv=5)
-
-    print(f"Polynomial Regression Mean Squared Error (MSE): {mse_poly:.2f}")
-    print(f"Polynomial Regression R² Score: {r2_poly:.3f}")
-    print(f"Polynomial Regression Cross-Validation Scores: {poly_cv_scores.mean():.3f} (+/- {poly_cv_scores.std() * 2:.3f})")
-    print("Model Selection Note: Polynomial Regression (R²=0.982) selected for its high accuracy and interpretability, suitable for BTS's needs in predicting trip frequencies.")
 
     # Visualize Polynomial Regression results
     plt.figure(figsize=(12, 6))
@@ -321,17 +297,8 @@ def total_trips_by_distance():
     num_weeks = data2["date"].nunique()
     total_trips = df_selected.sum()
 
-    if total_trips.empty or total_trips.isnull().all():
-        print("Error: No valid trip data to plot!")
-        return
-
     if num_weeks > 1:
         total_trips = total_trips / num_weeks
-
-    print("Total trips per category (normalized by weeks if needed):")
-    print(total_trips)
-    print(f"Number of unique dates in dataset: {num_weeks}")
-    print("Number of bars to plot:", len(total_trips))
 
     plt.figure(figsize=(12, 6))
     bars = plt.bar(total_trips.index, total_trips.values, width=0.6, color='royalblue', alpha=0.8)
@@ -341,29 +308,7 @@ def total_trips_by_distance():
     plt.xticks(rotation=45, ha='right')
     plt.gca().get_yaxis().set_major_formatter(plt.FuncFormatter(lambda x, _: f"{int(x):,}"))
     plt.grid(axis='y', linestyle='--', alpha=0.7)
-
-    if not bars:
-        print("Warning: No bars were created in the plot!")
-    else:
-        print("Bars created successfully:", [bar.get_height() for bar in bars])
-
-    filename = "Total_Trips_By_Distance.png"
-    plt.savefig(filename, dpi=150, bbox_inches='tight', format='png', transparent=False)
-    file_size = os.path.getsize(filename)
-    print(f"File saved as: {filename} (Size: {file_size} bytes)")
-
-    try:
-        with Image.open(filename) as img:
-            img.verify()
-            print("File is a valid PNG image.")
-    except Exception as e:
-        print(f"Error verifying PNG: {e}. File may be corrupted.")
-
-    if file_size == 0:
-        print("Warning: Saved file is empty! Check data or permissions.")
-    else:
-        print("File appears valid. Try opening it with an external viewer (e.g., Windows Photos) or a browser.")
-
+    plt.savefig("Total_Trips_By_Distance.png", dpi=150, bbox_inches='tight', format='png', transparent=False)
     plt.close()
 
 if __name__ == "__main__":
